@@ -123,6 +123,10 @@ code { font-family: var(--mono); font-size: .92em; }
 .sent-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; text-align: left; }
 .sent-list li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
 .callnum { font: 600 15px var(--mono); }
+#ovHeard { color: var(--fg); font-style: italic; }
+.handover { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.handover h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.handover pre { margin: 0; white-space: pre-wrap; font: 13px/1.5 var(--mono); }
 </style>
 </head>
 <body>
@@ -180,6 +184,9 @@ code { font-family: var(--mono); font-size: .92em; }
   <details class="card" id="settingsBox">
     <summary>Contacts &amp; settings</summary>
     <label>Patient's name<input id="sName" autocomplete="name" placeholder="e.g. Grandma Ada"></label>
+    <label>n8n webhook URL<input id="sWebhook" inputmode="url" placeholder="https://you.app.n8n.cloud/webhook/fall-alert" autocapitalize="off" autocorrect="off"></label>
+    <p class="hint">Falls go to your n8n workflow first. If it can't be reached, the phone sends the ntfy alert itself.</p>
+    <label>Medical notes for paramedics<textarea id="sMedical" placeholder="82, type 2 diabetes, takes warfarin (bleed risk), lives alone, key safe 1234"></textarea></label>
     <label>Caregiver alert channel (ntfy topic)<input id="sTopic" placeholder="e.g. fallsense-ada-7k2q" autocapitalize="off" autocorrect="off"></label>
     <p class="hint">Caregivers install the free <b>ntfy</b> app and subscribe to this topic, or open <code id="topicUrl">ntfy.sh/your-topic</code> in a browser. Pick something hard to guess.</p>
     <label>Emergency contacts (one per line: name, number)<textarea id="sContacts" placeholder="Mum, +447700900123&#10;Dr Okafor, +447700900456"></textarea></label>
@@ -210,6 +217,8 @@ code { font-family: var(--mono); font-size: .92em; }
     <p id="ovMsg">Your caregivers get an alert when the timer ends.</p>
     <div class="sev"><div class="sev-bar"><i id="ovSev"></i></div><span><span id="ovSevNum">0</span>/100</span></div>
     <p id="ovNote">Severity rises the longer you stay down.</p>
+    <p id="ovHeard" hidden></p>
+    <button class="btn" id="btnTalk">Tell me what happened</button>
     <button class="btn big ok" id="btnOk">I'm OK</button>
     <button class="btn big danger" id="btnHelp">Get help now</button>
   </div>
@@ -220,6 +229,7 @@ code { font-family: var(--mono); font-size: .92em; }
     <div class="ov-tier" id="sentTier"></div>
     <h2 id="sentTitle">Alert sent</h2>
     <ul class="sent-list" id="sentList"></ul>
+    <div class="handover" id="handover" hidden><h3>Paramedic handover</h3><pre id="handoverText"></pre></div>
     <a class="btn big danger" id="callBtn" href="#" hidden>Call</a>
     <a class="btn big" id="smsBtn" href="#" hidden>Text emergency contacts</a>
     <button class="btn" id="btnDone">Close</button>
@@ -257,10 +267,10 @@ const $ = s => document.querySelector(s);
 
 /* ---------- settings ---------- */
 const STORE = 'fallsense.v1';
-let settings = { name: '', topic: '', contacts: '', emergency: '', sens: 'normal' };
+let settings = { name: '', webhook: '', medical: '', topic: '', contacts: '', emergency: '', sens: 'normal' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(STORE) || '{}')); } catch (e) {}
 function saveSettings() { try { localStorage.setItem(STORE, JSON.stringify(settings)); } catch (e) {} }
-const fields = { name: '#sName', topic: '#sTopic', contacts: '#sContacts', emergency: '#sEmergency', sens: '#sSens' };
+const fields = { name: '#sName', webhook: '#sWebhook', medical: '#sMedical', topic: '#sTopic', contacts: '#sContacts', emergency: '#sEmergency', sens: '#sSens' };
 for (const [k, sel] of Object.entries(fields)) {
   const el = $(sel); el.value = settings[k];
   el.addEventListener('input', () => { settings[k] = el.value.trim(); saveSettings(); renderTopic(); });
@@ -417,7 +427,8 @@ function startCountdown(ev) {
   cd = { ev, left: TIERS[ev.tier].countdown, timer: setInterval(tick, 1000) };
   log(TIERS[ev.tier].label + ' detected (severity ' + ev.score + ')', 'danger');
   setPill('Fall!', 'danger');
-  $('#overlay').hidden = false; renderOverlay(); alarm.beep(ev.tier);
+  $('#overlay').hidden = false; $('#ovHeard').hidden = true; renderOverlay(); alarm.beep(ev.tier);
+  voice.checkIn();
 }
 function tick() {
   const ev = cd.ev;
@@ -446,7 +457,7 @@ function renderOverlay() {
 }
 function endCountdown(reason) {
   if (!cd) return;
-  clearInterval(cd.timer);
+  clearInterval(cd.timer); voice.stop();
   const ev = cd.ev; cd = null;
   $('#overlay').hidden = true;
   if (reason === 'ok') { log('User said they are OK: alert cancelled', 'ok'); setPill(monitoring ? 'On' : 'Off', monitoring ? 'on' : 'off'); return; }
@@ -454,6 +465,7 @@ function endCountdown(reason) {
   sendAlert(ev);
 }
 $('#btnOk').onclick = () => endCountdown('ok');
+$('#btnTalk').onclick = () => voice.listen();
 $('#btnHelp').onclick = () => { if (cd) { cd.ev.score = Math.max(cd.ev.score, 40); cd.ev.tier = tierFor(cd.ev.score); } endCountdown('help'); };
 $('#btnSos').onclick = () => {
   alarm.unlock();
@@ -479,15 +491,37 @@ async function sendAlert(ev) {
     : name + ' may have fallen at ' + when + ' and did not respond. Severity ' + ev.score + '/100 (impact ' + ev.peak.toFixed(1) + ' g, est. drop ' + ev.heightM.toFixed(1) + ' m, not moving for ' + ev.stillS + ' s).';
   const body = what + (map ? '\nLocation (within ' + Math.round(lastPos.accuracy) + ' m): ' + map : '\nLocation unavailable.');
   const results = [];
+  let ai = null;
 
-  if (settings.topic) {
+  if (settings.webhook) {
+    try {
+      const payload = {
+        kind: ev.verdict === 'sos' ? 'sos' : 'fall', time: (ev.at || new Date()).toISOString(),
+        patient: { name, medical: settings.medical, contacts: contacts() },
+        sensor: { tier: ev.tier, score: ev.score, peak_g: +ev.peak.toFixed(2), free_fall_ms: Math.round(ev.ffMs || 0), drop_height_m: +ev.heightM.toFixed(2), posture_change_deg: Math.round(ev.angle || 0), seconds_not_moving: ev.stillS || 0 },
+        spoken_reply: ev.transcript || null,
+        location: lastPos ? { lat: lastPos.latitude, lon: lastPos.longitude, accuracy_m: Math.round(lastPos.accuracy), map } : null,
+        ntfy_topic: settings.topic || null,
+      };
+      const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(settings.webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: ctrl.signal });
+      clearTimeout(to);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      ai = await r.json().catch(() => ({}));
+      if (ai.tier && TIERS[ai.tier] && ai.tier !== ev.tier) { log('n8n agent set severity to ' + TIERS[ai.tier].label.toLowerCase(), 'warn'); ev.tier = ai.tier; }
+      results.push([ai.status || 'n8n workflow alerted your caregivers', 'ok']);
+    } catch (e) { results.push(['n8n workflow unreachable (' + (e.name === 'AbortError' ? 'timeout' : e.message) + '). Sending the direct alert instead.', 'warn']); }
+  }
+
+  if (ai) { /* n8n handled the caregiver alert */ }
+  else if (settings.topic) {
     try {
       const headers = { Title: ascii((ev.verdict === 'sos' ? 'SOS: ' : 'FALL ALERT: ') + name + ' - ' + t.label) || 'FALL ALERT', Priority: String(t.priority), Tags: t.tags };
       if (map) { headers.Click = map; headers.Actions = 'view, Open map, ' + map; }
       const r = await fetch('https://ntfy.sh/' + encodeURIComponent(settings.topic), { method: 'POST', body, headers });
       results.push(r.ok ? ['Push alert delivered to caregivers on ntfy/' + settings.topic, 'ok'] : ['Push alert failed (HTTP ' + r.status + ')', 'danger']);
     } catch (e) { results.push(['Push alert failed: no connection', 'danger']); }
-  } else results.push(['No caregiver channel set. Add an ntfy topic in settings.', 'warn']);
+  } else results.push(['No caregiver channel set. Add an n8n webhook or ntfy topic in settings.', 'warn']);
   results.forEach(([m, k]) => log(m, k));
 
   const cs = contacts();
@@ -499,6 +533,7 @@ async function sendAlert(ev) {
     $('#smsBtn').hidden = false;
   } else $('#smsBtn').hidden = true;
 
+  const t2 = TIERS[ev.tier];
   const callIt = (ev.tier === 'severe' || ev.verdict === 'sos') && settings.emergency;
   if (callIt) {
     $('#callBtn').href = 'tel:' + settings.emergency.replace(/[^\d+]/g, '');
@@ -507,7 +542,10 @@ async function sendAlert(ev) {
     results.push(['Opening the call to ' + settings.emergency + '. Tap Call on the iPhone prompt.', 'warn']);
   } else $('#callBtn').hidden = true;
 
-  $('#sentTier').textContent = ev.verdict === 'sos' ? 'SOS' : t.label;
+  $('#sentTier').textContent = ev.verdict === 'sos' ? 'SOS' : t2.label;
+  $('#handover').hidden = !ai?.paramedic_handover;
+  if (ai?.paramedic_handover) $('#handoverText').textContent = ai.paramedic_handover;
+  if (ai?.spoken_reply) voice.say(ai.spoken_reply);
   $('#sentTitle').textContent = results[0][1] === 'ok' ? 'Caregivers alerted' : 'Get help';
   const ul = $('#sentList'); ul.textContent = '';
   for (const [m] of results) { const li = document.createElement('li'); li.textContent = m; ul.append(li); }
@@ -525,11 +563,50 @@ $('#btnTest').onclick = async () => {
   } catch (e) { log('Test failed: no connection', 'danger'); }
 };
 
+/* ---------- voice check-in ---------- */
+const voice = {
+  rec: null,
+  say(text, then) {
+    try {
+      const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; u.lang = 'en-GB';
+      if (then) u.onend = then;
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+    } catch (e) { then && then(); }
+  },
+  checkIn() { this.say('Are you okay? Say I am okay, or tell me what hurts.', () => this.listen()); },
+  listen() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || !cd) return;
+    try { this.rec?.abort(); } catch (e) {}
+    const rec = this.rec = new SR(); rec.lang = 'en-GB'; rec.interimResults = true; rec.continuous = false;
+    $('#ovHeard').hidden = false; $('#ovHeard').textContent = 'Listening…';
+    rec.onresult = e => {
+      const text = Array.from(e.results).map(r => r[0].transcript).join(' ');
+      $('#ovHeard').textContent = '“' + text + '”';
+      if (e.results[e.results.length - 1].isFinal) this.heard(text);
+    };
+    rec.onerror = () => { $('#ovHeard').textContent = 'Didn’t catch that. Tap the button to try again.'; };
+    try { rec.start(); } catch (e) {}
+  },
+  heard(text) {
+    if (!cd) return;
+    cd.ev.transcript = text;
+    const t = text.toLowerCase();
+    const distress = /(help|hurt|pain|can'?t|cannot|bleed|broke|dizzy|chest|ambulance|hip|head)/.test(t);
+    const fine = /\b(i'?m|i am)\s+(ok|okay|fine|alright|all right)\b/.test(t) && !/not/.test(t);
+    log('Heard: "' + text + '"', distress ? 'danger' : 'muted');
+    if (distress) endCountdown('help');
+    else if (fine) endCountdown('ok');
+  },
+  stop() { try { this.rec?.abort(); } catch (e) {} },
+};
+
 /* ---------- alarm sound ---------- */
 const alarm = {
   ctx: null,
   unlock() {
     try { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch (e) {}
+    try { if (!this.spoke) { speechSynthesis.speak(new SpeechSynthesisUtterance('')); this.spoke = true; } } catch (e) {}
   },
   beep(tier) {
     if (!this.ctx) return;
