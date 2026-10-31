@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FallSense">
+<title>FallSense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: one phone-width column; a live sensor "monitor" up top, controls and evidence below. Dark-first, like a bedside monitor. */
+:root {
+  --bg: #0e1316; --surface: #161d22; --surface-2: #1d262c; --line: #27323a;
+  --fg: #e6edef; --muted: #8b9ba3;
+  --accent: #5cc8b8; --warn: #f0b54a; --danger: #ef5b50; --ok: #72d095;
+  --on-color: #0e1316;
+  --display: "Archivo", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #eef3f3; --surface: #ffffff; --surface-2: #f4f8f8; --line: #d4dfe1;
+    --fg: #11191d; --muted: #566870;
+    --accent: #13877a; --warn: #a96d0c; --danger: #c8352b; --ok: #1f8a4c;
+    --on-color: #ffffff; color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.5 var(--display);
+  padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) calc(32px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  -webkit-tap-highlight-color: transparent;
+}
+[hidden] { display: none !important; }
+.wrap { max-width: 520px; margin: 0 auto; display: grid; gap: 16px; padding-top: 12px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { font-weight: 800; font-size: 22px; letter-spacing: -0.02em; }
+.brand span { color: var(--accent); }
+.pill { font: 600 12px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 7px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pill[data-s="on"] { color: var(--accent); border-color: var(--accent); }
+.pill[data-s="warn"] { color: var(--warn); border-color: var(--warn); }
+.pill[data-s="danger"] { color: var(--danger); border-color: var(--danger); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.card h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.monitor { gap: 8px; }
+.readout { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.gval { font: 600 44px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.gval small { font-size: 18px; color: var(--muted); margin-left: 4px; }
+.state { font-weight: 600; font-size: 17px; color: var(--muted); }
+.state[data-s="on"] { color: var(--accent); } .state[data-s="warn"] { color: var(--warn); } .state[data-s="danger"] { color: var(--danger); }
+canvas { width: 100%; height: 150px; display: block; border-radius: 8px; background: var(--surface-2); }
+.legend { font: 12px var(--mono); color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+
+.btn { appearance: none; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); font: 600 15px var(--display); padding: 12px 14px; border-radius: 10px; cursor: pointer; text-align: center; text-decoration: none; display: inline-block; }
+.btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-color); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: var(--on-color); }
+.btn.big { font-size: 20px; padding: 18px; width: 100%; border-radius: 14px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row > .btn { flex: 1 1 140px; }
+.sims { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.sims .btn { font-size: 14px; padding: 12px 8px; display: grid; gap: 2px; }
+.sims .btn small { font: 400 11px var(--mono); color: var(--muted); }
+
+.metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 0; }
+.metrics div { display: grid; gap: 2px; }
+.metrics dt { font-size: 12px; color: var(--muted); }
+.metrics dd { margin: 0; font: 600 17px var(--mono); font-variant-numeric: tabular-nums; }
+.verdict { display: flex; gap: 10px; align-items: flex-start; }
+.chip { font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 6px 8px; border-radius: 6px; white-space: nowrap; color: var(--on-color); background: var(--muted); }
+.chip[data-v="fall"], .chip[data-v="severe"], .chip[data-v="serious"] { background: var(--danger); color: #fff; }
+.chip[data-v="minor"] { background: var(--warn); }
+.chip[data-v="drop"], .chip[data-v="bump"], .chip[data-v="ok"] { background: var(--ok); }
+.why { margin: 0; color: var(--muted); font-size: 14px; }
+.empty { color: var(--muted); margin: 0; font-size: 14px; }
+
+details.card { gap: 0; }
+details.card[open] { gap: 12px; }
+summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; }
+summary::after { content: "+"; color: var(--muted); font-family: var(--mono); }
+details[open] summary::after { content: "−"; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+input, textarea, select { font: 15px var(--display); color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; width: 100%; }
+textarea { min-height: 76px; resize: vertical; font-family: var(--mono); font-size: 14px; }
+.hint { font-size: 12px; color: var(--muted); margin: 0; }
+.hint b { color: var(--warn); font-weight: 600; }
+code { font-family: var(--mono); font-size: .92em; }
+
+.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 14px; }
+.log li { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: baseline; }
+.log time { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.log .m-muted { color: var(--muted); } .log .m-ok { color: var(--ok); } .log .m-warn { color: var(--warn); } .log .m-danger { color: var(--danger); }
+
+.banner { border: 1px solid var(--warn); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+
+.toast { position: fixed; left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); max-width: 520px; margin: 0 auto; background: var(--surface); border: 1px solid var(--ok); border-radius: 14px; padding: 14px; display: grid; gap: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.35); z-index: 20; }
+.toast p { margin: 0; }
+
+.overlay { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: grid; place-items: center; padding: calc(20px + env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px)); overflow-y: auto; --tier: var(--warn); }
+.overlay[data-tier="serious"], .overlay[data-tier="severe"] { --tier: var(--danger); }
+.overlay[data-tier="severe"] { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: inset 0 0 0 10px var(--danger); } }
+@media (prefers-reduced-motion: reduce) { .overlay[data-tier="severe"] { animation: none; box-shadow: inset 0 0 0 10px var(--danger); } }
+.ov { width: 100%; max-width: 440px; display: grid; gap: 14px; text-align: center; }
+.ov-tier { font: 600 13px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--tier); }
+.ov h2 { margin: 0; font-size: 34px; font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; }
+.ov-count { font: 600 96px/1 var(--mono); color: var(--tier); font-variant-numeric: tabular-nums; }
+.ov-count small { font-size: 32px; }
+.ov p { margin: 0; color: var(--muted); }
+.sev { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; font: 14px var(--mono); text-align: left; }
+.sev-bar { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--line); }
+.sev-bar i { display: block; height: 100%; background: var(--tier); transition: width .4s; }
+.sent-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; text-align: left; }
+.sent-list li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.callnum { font: 600 15px var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">Fall<span>Sense</span></div>
+    <span class="pill" id="pill" data-s="off">Off</span>
+  </header>
+
+  <div class="banner" id="insecure" hidden>The motion sensor only works over HTTPS. Host this page (see the README) and open the https:// link in Safari on your iPhone.</div>
+
+  <section class="card monitor" aria-label="Live sensor">
+    <div class="readout">
+      <div class="gval" id="gval">1.00<small>g</small></div>
+      <div class="state" id="state" data-s="off">Not monitoring</div>
+    </div>
+    <canvas id="graph" aria-label="Acceleration over the last 6 seconds"></canvas>
+    <div class="legend"><span>|a| last 6 s</span><span style="color:var(--warn)">— 0.6 g free fall</span><span style="color:var(--danger)">— 2 g impact</span></div>
+    <div class="row">
+      <button class="btn primary big" id="btnStart">Start monitoring</button>
+    </div>
+    <button class="btn danger" id="btnSos">I need help (SOS)</button>
+  </section>
+
+  <section class="card" aria-labelledby="simTitle">
+    <h2 id="simTitle">Demo: simulate a fall</h2>
+    <div class="sims">
+      <button class="btn" data-sim="stumble">Stumble<small>should not alert</small></button>
+      <button class="btn" data-sim="gentle">Gentle fall<small>minor</small></button>
+      <button class="btn" data-sim="hard">Hard fall<small>serious</small></button>
+      <button class="btn" data-sim="severe">Severe fall<small>severe + call</small></button>
+      <button class="btn" data-sim="drop">Phone dropped<small>should not alert</small></button>
+    </div>
+    <p class="hint">Each button plays a recorded-style sensor trace through the same detector the real sensor uses.</p>
+  </section>
+
+  <section class="card" aria-labelledby="lastTitle">
+    <h2 id="lastTitle">Last detection</h2>
+    <div id="lastEmpty" class="empty">Nothing yet. Start monitoring and drop onto a mattress, or tap a demo button.</div>
+    <div id="last" hidden>
+      <div class="verdict"><span class="chip" id="lastChip"></span><p class="why" id="lastWhy"></p></div>
+      <dl class="metrics" style="margin-top:12px">
+        <div><dt>Peak impact</dt><dd id="mPeak"></dd></div>
+        <div><dt>Free fall</dt><dd id="mFf"></dd></div>
+        <div><dt>Est. drop height</dt><dd id="mH"></dd></div>
+        <div><dt>Posture change</dt><dd id="mAng"></dd></div>
+        <div><dt>Movement after</dt><dd id="mStd"></dd></div>
+        <div><dt>Bounces</dt><dd id="mB"></dd></div>
+        <div><dt>Phone-drop score</dt><dd id="mDrop"></dd></div>
+        <div><dt>Severity</dt><dd id="mSev"></dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <details class="card" id="settingsBox">
+    <summary>Contacts &amp; settings</summary>
+    <label>Patient's name<input id="sName" autocomplete="name" placeholder="e.g. Grandma Ada"></label>
+    <label>Caregiver alert channel (ntfy topic)<input id="sTopic" placeholder="e.g. fallsense-ada-7k2q" autocapitalize="off" autocorrect="off"></label>
+    <p class="hint">Caregivers install the free <b>ntfy</b> app and subscribe to this topic, or open <code id="topicUrl">ntfy.sh/your-topic</code> in a browser. Pick something hard to guess.</p>
+    <label>Emergency contacts (one per line: name, number)<textarea id="sContacts" placeholder="Mum, +447700900123&#10;Dr Okafor, +447700900456"></textarea></label>
+    <label>Number to call on a severe fall<input id="sEmergency" inputmode="tel" placeholder="999"></label>
+    <p class="hint"><b>For the demo, use a teammate's number, not 999 or 112.</b> In the UK, 999 and 112 both reach emergency services. iPhone always asks before it places the call.</p>
+    <label>Sensitivity
+      <select id="sSens"><option value="high">High (frail, slow falls)</option><option value="normal" selected>Normal</option><option value="low">Low (active user)</option></select>
+    </label>
+    <button class="btn" id="btnTest">Send test alert to caregivers</button>
+  </details>
+
+  <section class="card" aria-labelledby="logTitle">
+    <h2 id="logTitle">Event log</h2>
+    <ul class="log" id="log"></ul>
+  </section>
+</div>
+
+<div class="toast" id="toast" hidden>
+  <p id="toastMsg"></p>
+  <div class="row"><button class="btn" id="toastFell">Actually, I fell</button><button class="btn" id="toastClose">Dismiss</button></div>
+</div>
+
+<div class="overlay" id="overlay" hidden role="alertdialog" aria-labelledby="ovQ">
+  <div class="ov">
+    <div class="ov-tier" id="ovTier">Serious fall</div>
+    <h2 id="ovQ">Did you fall?</h2>
+    <div class="ov-count"><span id="ovCount">20</span><small>s</small></div>
+    <p id="ovMsg">Your caregivers get an alert when the timer ends.</p>
+    <div class="sev"><div class="sev-bar"><i id="ovSev"></i></div><span><span id="ovSevNum">0</span>/100</span></div>
+    <p id="ovNote">Severity rises the longer you stay down.</p>
+    <button class="btn big ok" id="btnOk">I'm OK</button>
+    <button class="btn big danger" id="btnHelp">Get help now</button>
+  </div>
+</div>
+
+<div class="overlay" id="sent" hidden role="dialog" aria-labelledby="sentTitle">
+  <div class="ov">
+    <div class="ov-tier" id="sentTier"></div>
+    <h2 id="sentTitle">Alert sent</h2>
+    <ul class="sent-list" id="sentList"></ul>
+    <a class="btn big danger" id="callBtn" href="#" hidden>Call</a>
+    <a class="btn big" id="smsBtn" href="#" hidden>Text emergency contacts</a>
+    <button class="btn" id="btnDone">Close</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+const G = 9.80665;
+
+// Detection thresholds. Units: g (1 g = gravity) and milliseconds.
+const CFG = {
+  FF_G: 0.6,           // |a| below this means the phone is falling
+  FF_MIN_MS: 60,       // free fall must last this long to count
+  FF_MAX_MS: 2000,     // longer free fall = thrown, not a fall
+  IMPACT_G: 2.0,       // impact that must follow free fall
+  HARD_IMPACT_G: 3.5,  // impact with no free fall (collapse, knocked over)
+  IMPACT_WAIT_MS: 800, // impact must come this soon after free fall ends
+  IMPACT_WIN_MS: 500,  // window to measure peak, width and bounces
+  POST_MS: 2000,       // window after impact to judge stillness and posture
+  BOUNCE_G: 1.8,
+  STILL_STD: 0.006,    // movement below this = lying on a surface, nobody holding it
+  HUMAN_STD: 0.012,    // above this = breathing / hand tremor, a person is attached
+  DROP_SCORE: 3,
+};
+const SENS = { high: 0.8, normal: 1, low: 1.25 };
+const TIERS = {
+  minor:   { label: 'Minor fall',   countdown: 30, priority: 4, tags: 'warning' },
+  serious: { label: 'Serious fall', countdown: 20, priority: 5, tags: 'warning,ambulance' },
+  severe:  { label: 'Severe fall',  countdown: 15, priority: 5, tags: 'rotating_light,ambulance' },
+};
+const tierFor = s => s >= 70 ? 'severe' : s >= 40 ? 'serious' : 'minor';
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const $ = s => document.querySelector(s);
+
+/* ---------- settings ---------- */
+const STORE = 'fallsense.v1';
+let settings = { name: '', topic: '', contacts: '', emergency: '', sens: 'normal' };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(STORE) || '{}')); } catch (e) {}
+function saveSettings() { try { localStorage.setItem(STORE, JSON.stringify(settings)); } catch (e) {} }
+const fields = { name: '#sName', topic: '#sTopic', contacts: '#sContacts', emergency: '#sEmergency', sens: '#sSens' };
+for (const [k, sel] of Object.entries(fields)) {
+  const el = $(sel); el.value = settings[k];
+  el.addEventListener('input', () => { settings[k] = el.value.trim(); saveSettings(); renderTopic(); });
+}
+function renderTopic() { $('#topicUrl').textContent = 'ntfy.sh/' + (settings.topic || 'your-topic'); }
+renderTopic();
+if (!settings.topic) $('#settingsBox').open = true;
+function contacts() {
+  return settings.contacts.split('\n').map(l => l.split(',')).filter(p => p.length >= 2 && p[1].trim())
+    .map(p => ({ name: p[0].trim(), phone: p.slice(1).join(',').replace(/[^\d+]/g, '') }));
+}
+
+/* ---------- log ---------- */
+function log(msg, kind = 'muted') {
+  const li = document.createElement('li');
+  const t = document.createElement('time'); t.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const s = document.createElement('span'); s.className = 'm-' + kind; s.textContent = msg;
+  li.append(t, s); $('#log').prepend(li);
+  while ($('#log').children.length > 40) $('#log').lastChild.remove();
+}
+
+/* ---------- UI state ---------- */
+let monitoring = false, gotMotion = false;
+function setState(text, s) { $('#state').textContent = text; $('#state').dataset.s = s; }
+function setPill(text, s) { $('#pill').textContent = text; $('#pill').dataset.s = s; }
+function idleState() { monitoring || sim ? setState('Monitoring', 'on') : setState('Not monitoring', 'off'); }
+
+/* ---------- detector ---------- */
+const graph = [];
+const det = { hist: [], lastT: 0 };
+function resetDet() { Object.assign(det, { state: 'idle', ffStart: 0, ffEnd: 0, minG: 1, pre: null, imp: null, post: null }); }
+resetDet();
+const meanVec = a => { let x = 0, y = 0, z = 0; for (const s of a) { x += s.x; y += s.y; z += s.z; } const n = a.length || 1; return { x: x / n, y: y / n, z: z / n }; };
+const angleBetween = (a, b) => { const d = (a.x * b.x + a.y * b.y + a.z * b.z) / ((Math.hypot(a.x, a.y, a.z) * Math.hypot(b.x, b.y, b.z)) || 1); return Math.acos(Math.max(-1, Math.min(1, d))) * 180 / Math.PI; };
+const std = v => { if (!v.length) return 0; const m = v.reduce((a, b) => a + b, 0) / v.length; return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length); };
+// Average gravity direction just before the event = the posture before the fall.
+function preVec(t) { const a = det.hist.filter(s => s.t < t - 150); return meanVec(a.length ? a : det.hist); }
+
+function ingest(x, y, z, t) {
+  const m = Math.hypot(x, y, z);
+  const dt = det.lastT ? Math.min(t - det.lastT, 100) : 16; det.lastT = t;
+  const s = { t, x, y, z, m };
+  graph.push(s); while (graph[0].t < t - 6000) graph.shift();
+  det.hist.push(s); while (det.hist[0].t < t - 1500) det.hist.shift();
+  if (cd) return; // already handling a fall
+  const k = SENS[settings.sens] || 1;
+  switch (det.state) {
+    case 'idle':
+      if (m < CFG.FF_G) {
+        if (!det.ffStart) { det.ffStart = t; det.minG = m; det.pre = preVec(t); }
+        det.minG = Math.min(det.minG, m); det.ffEnd = t;
+        if (t - det.ffStart >= CFG.FF_MIN_MS) { det.state = 'freefall'; setState('Free fall', 'warn'); }
+      } else {
+        det.ffStart = 0;
+        if (m >= CFG.HARD_IMPACT_G * k) { det.pre = preVec(t); startImpact(s, false); }
+      }
+      break;
+    case 'freefall':
+      if (m < CFG.FF_G) {
+        det.minG = Math.min(det.minG, m); det.ffEnd = t;
+        if (t - det.ffStart > CFG.FF_MAX_MS) { resetDet(); idleState(); log('Long free fall with no impact: ignored (thrown?)'); }
+      } else if (m >= CFG.IMPACT_G * k) startImpact(s, true);
+      else if (t - det.ffEnd > CFG.IMPACT_WAIT_MS) { resetDet(); idleState(); log('Free fall but no impact: ignored (caught it?)'); }
+      break;
+    case 'impact': {
+      const I = det.imp;
+      I.peak = Math.max(I.peak, m);
+      if (m > 1.5) I.width += dt;
+      const above = m >= CFG.BOUNCE_G; if (above && !I.above) I.bounces++; I.above = above;
+      if (t - I.t0 >= CFG.IMPACT_WIN_MS) { det.state = 'post'; det.post = []; det.postT0 = t; setState('Checking…', 'warn'); }
+      break;
+    }
+    case 'post':
+      det.post.push(s);
+      if (t - det.postT0 >= CFG.POST_MS) analyze();
+      break;
+  }
+}
+function startImpact(s, hadFF) {
+  det.state = 'impact';
+  det.imp = { t0: s.t, peak: s.m, width: 0, bounces: 1, above: s.m >= CFG.BOUNCE_G, hadFF };
+  setState('Impact!', 'danger');
+}
+
+function analyze() {
+  const I = det.imp, post = det.post;
+  const postStd = std(post.map(s => s.m));
+  const ang = angleBetween(det.pre, meanVec(post));
+  const ffMs = I.hadFF ? Math.max(0, det.ffEnd - det.ffStart) : 0;
+  const heightM = 0.5 * G * (ffMs / 1000) ** 2; // h = ½ g t²
+  const why = [];
+  let drop = 0;
+  if (postStd < CFG.STILL_STD) { drop += 2; why.push('dead still afterwards (no breathing or hand tremor)'); }
+  if (I.peak > 6 && I.width < 40) { drop += 1; why.push('very sharp impact, like glass on a floor'); }
+  if (I.bounces >= 2) { drop += 1; why.push(I.bounces + ' bounces'); }
+  if (I.hadFF && det.minG < 0.1 && ffMs > 300) { drop += 1; why.push('perfectly clean free fall'); }
+  if (postStd > CFG.HUMAN_STD) { drop -= 1; why.push('small movements afterwards, so a person is holding or wearing it'); }
+  const base = Math.round(clamp01((I.peak - 2) / 6) * 50 + clamp01(heightM / 1) * 20 + (ang > 45 ? 10 : 0) + (postStd < 0.05 ? 5 : 0));
+  const ev = { peak: I.peak, width: I.width, bounces: I.bounces, ffMs, heightM, minG: det.minG, postStd, angle: ang, drop, why, base, score: base };
+  resetDet(); idleState();
+
+  if (!I.hadFF && ang < 40) {
+    ev.verdict = 'bump'; ev.why = ['hard knock but no free fall and no change in posture'];
+    renderLast(ev); log('Bump with no posture change: ignored', 'ok');
+  } else if (drop >= CFG.DROP_SCORE) {
+    ev.verdict = 'drop';
+    renderLast(ev); log('Phone dropped, not a person: no alert', 'ok');
+    showToast('Looks like the phone was dropped, not you. No alert sent.', ev);
+  } else {
+    ev.verdict = 'fall';
+    renderLast(ev);
+    startCountdown(ev);
+  }
+}
+
+/* ---------- last detection card ---------- */
+function renderLast(ev) {
+  $('#lastEmpty').hidden = true; $('#last').hidden = false;
+  const tier = ev.verdict === 'fall' ? tierFor(ev.score) : ev.verdict;
+  const chip = $('#lastChip');
+  chip.dataset.v = tier;
+  chip.textContent = { drop: 'Phone drop', bump: 'Bump', minor: 'Minor fall', serious: 'Serious fall', severe: 'Severe fall' }[tier];
+  $('#lastWhy').textContent = ev.why.length ? cap(ev.why.join('; ')) + '.' : 'Free fall, impact and a change in posture.';
+  $('#mPeak').textContent = ev.peak.toFixed(1) + ' g';
+  $('#mFf').textContent = Math.round(ev.ffMs) + ' ms';
+  $('#mH').textContent = ev.heightM.toFixed(2) + ' m';
+  $('#mAng').textContent = Math.round(ev.angle) + '°';
+  $('#mStd').textContent = ev.postStd.toFixed(3) + ' g';
+  $('#mB').textContent = ev.bounces;
+  $('#mDrop').textContent = ev.drop + ' / ' + CFG.DROP_SCORE;
+  $('#mSev').textContent = ev.verdict === 'fall' ? ev.score + ' / 100' : '—';
+}
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+/* ---------- toast (phone drop) ---------- */
+let toastEv = null, toastTimer = 0;
+function showToast(msg, ev) {
+  toastEv = ev; $('#toastMsg').textContent = msg; $('#toast').hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 12000);
+}
+$('#toastClose').onclick = () => { $('#toast').hidden = true; };
+$('#toastFell').onclick = () => {
+  $('#toast').hidden = true;
+  if (!toastEv || cd) return;
+  toastEv.verdict = 'fall'; toastEv.base = Math.max(toastEv.base, 40); toastEv.score = toastEv.base;
+  log('User reported a fall the detector missed', 'warn');
+  startCountdown(toastEv);
+};
+
+/* ---------- countdown ---------- */
+let cd = null;
+function startCountdown(ev) {
+  ev.tier = tierFor(ev.score); ev.stillS = 0; ev.at = new Date();
+  cd = { ev, left: TIERS[ev.tier].countdown, timer: setInterval(tick, 1000) };
+  log(TIERS[ev.tier].label + ' detected (severity ' + ev.score + ')', 'danger');
+  setPill('Fall!', 'danger');
+  $('#overlay').hidden = false; renderOverlay(); alarm.beep(ev.tier);
+}
+function tick() {
+  const ev = cd.ev;
+  // Long lie: if the person isn't moving much, severity keeps rising.
+  const last = graph.length ? graph[graph.length - 1].t : 0;
+  const recent = graph.filter(s => s.t > last - 1000).map(s => s.m);
+  if (recent.length > 10 && std(recent) < 0.05) { ev.stillS++; ev.score = Math.min(100, ev.base + Math.min(20, ev.stillS * 2)); }
+  const nt = tierFor(ev.score);
+  if (nt !== ev.tier) { ev.tier = nt; cd.left = Math.min(cd.left, TIERS[nt].countdown); log('Still not moving: upgraded to ' + TIERS[nt].label.toLowerCase(), 'danger'); }
+  cd.left--;
+  renderOverlay(); alarm.beep(ev.tier);
+  if (cd.left <= 0) endCountdown('timeout');
+}
+function renderOverlay() {
+  const ev = cd.ev;
+  $('#overlay').dataset.tier = ev.tier;
+  $('#ovTier').textContent = TIERS[ev.tier].label;
+  $('#ovCount').textContent = Math.max(0, cd.left);
+  $('#ovSev').style.width = ev.score + '%';
+  $('#ovSevNum').textContent = ev.score;
+  $('#ovMsg').textContent = ev.tier === 'severe' && settings.emergency
+    ? 'When the timer ends we alert your caregivers and call ' + settings.emergency + '.'
+    : 'Your caregivers get an alert when the timer ends.';
+  $('#ovNote').textContent = ev.stillS ? 'Not moving for ' + ev.stillS + ' s. Severity rises the longer you stay down.' : 'Severity rises the longer you stay down.';
+  renderLast(ev);
+}
+function endCountdown(reason) {
+  if (!cd) return;
+  clearInterval(cd.timer);
+  const ev = cd.ev; cd = null;
+  $('#overlay').hidden = true;
+  if (reason === 'ok') { log('User said they are OK: alert cancelled', 'ok'); setPill(monitoring ? 'On' : 'Off', monitoring ? 'on' : 'off'); return; }
+  log(reason === 'help' ? 'User asked for help' : 'No response: sending alert', 'danger');
+  sendAlert(ev);
+}
+$('#btnOk').onclick = () => endCountdown('ok');
+$('#btnHelp').onclick = () => { if (cd) { cd.ev.score = Math.max(cd.ev.score, 40); cd.ev.tier = tierFor(cd.ev.score); } endCountdown('help'); };
+$('#btnSos').onclick = () => {
+  alarm.unlock();
+  if (cd) return;
+  sendAlert({ verdict: 'sos', tier: 'serious', score: 60, peak: 0, heightM: 0, stillS: 0, at: new Date() });
+};
+
+/* ---------- alerts ---------- */
+let lastPos = null;
+function startGeo() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.watchPosition(p => { lastPos = p.coords; }, () => {}, { enableHighAccuracy: true, maximumAge: 30000 });
+}
+const ascii = s => s.replace(/[^\x20-\x7E]/g, '').trim();
+
+async function sendAlert(ev) {
+  const t = TIERS[ev.tier];
+  const name = settings.name || 'Your family member';
+  const when = (ev.at || new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const map = lastPos ? 'https://maps.google.com/?q=' + lastPos.latitude.toFixed(6) + ',' + lastPos.longitude.toFixed(6) : '';
+  const what = ev.verdict === 'sos'
+    ? name + ' pressed the SOS button at ' + when + '.'
+    : name + ' may have fallen at ' + when + ' and did not respond. Severity ' + ev.score + '/100 (impact ' + ev.peak.toFixed(1) + ' g, est. drop ' + ev.heightM.toFixed(1) + ' m, not moving for ' + ev.stillS + ' s).';
+  const body = what + (map ? '\nLocation (within ' + Math.round(lastPos.accuracy) + ' m): ' + map : '\nLocation unavailable.');
+  const results = [];
+
+  if (settings.topic) {
+    try {
+      const headers = { Title: ascii((ev.verdict === 'sos' ? 'SOS: ' : 'FALL ALERT: ') + name + ' - ' + t.label) || 'FALL ALERT', Priority: String(t.priority), Tags: t.tags };
+      if (map) { headers.Click = map; headers.Actions = 'view, Open map, ' + map; }
+      const r = await fetch('https://ntfy.sh/' + encodeURIComponent(settings.topic), { method: 'POST', body, headers });
+      results.push(r.ok ? ['Push alert delivered to caregivers on ntfy/' + settings.topic, 'ok'] : ['Push alert failed (HTTP ' + r.status + ')', 'danger']);
+    } catch (e) { results.push(['Push alert failed: no connection', 'danger']); }
+  } else results.push(['No caregiver channel set. Add an ntfy topic in settings.', 'warn']);
+  results.forEach(([m, k]) => log(m, k));
+
+  const cs = contacts();
+  if (cs.length) {
+    const nums = cs.map(c => c.phone);
+    const enc = encodeURIComponent(body);
+    $('#smsBtn').href = nums.length === 1 ? 'sms:' + nums[0] + '&body=' + enc : 'sms:/open?addresses=' + nums.join(',') + '&body=' + enc;
+    $('#smsBtn').textContent = 'Text ' + cs.map(c => c.name).join(', ');
+    $('#smsBtn').hidden = false;
+  } else $('#smsBtn').hidden = true;
+
+  const callIt = (ev.tier === 'severe' || ev.verdict === 'sos') && settings.emergency;
+  if (callIt) {
+    $('#callBtn').href = 'tel:' + settings.emergency.replace(/[^\d+]/g, '');
+    $('#callBtn').textContent = 'Call ' + settings.emergency;
+    $('#callBtn').hidden = false;
+    results.push(['Opening the call to ' + settings.emergency + '. Tap Call on the iPhone prompt.', 'warn']);
+  } else $('#callBtn').hidden = true;
+
+  $('#sentTier').textContent = ev.verdict === 'sos' ? 'SOS' : t.label;
+  $('#sentTitle').textContent = results[0][1] === 'ok' ? 'Caregivers alerted' : 'Get help';
+  const ul = $('#sentList'); ul.textContent = '';
+  for (const [m] of results) { const li = document.createElement('li'); li.textContent = m; ul.append(li); }
+  $('#sent').dataset.tier = ev.tier;
+  $('#sent').hidden = false;
+  setPill('Alerted', 'danger');
+  if (callIt) setTimeout(() => { location.href = $('#callBtn').href; }, 800);
+}
+$('#btnDone').onclick = () => { $('#sent').hidden = true; setPill(monitoring ? 'On' : 'Off', monitoring ? 'on' : 'off'); };
+$('#btnTest').onclick = async () => {
+  if (!settings.topic) { log('Add an ntfy topic first', 'warn'); return; }
+  try {
+    const r = await fetch('https://ntfy.sh/' + encodeURIComponent(settings.topic), { method: 'POST', body: 'Test from FallSense. If you can read this, fall alerts for ' + (settings.name || 'your family member') + ' will reach you.', headers: { Title: 'FallSense test', Tags: 'white_check_mark' } });
+    log(r.ok ? 'Test alert sent' : 'Test failed (HTTP ' + r.status + ')', r.ok ? 'ok' : 'danger');
+  } catch (e) { log('Test failed: no connection', 'danger'); }
+};
+
+/* ---------- alarm sound ---------- */
+const alarm = {
+  ctx: null,
+  unlock() {
+    try { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch (e) {}
+  },
+  beep(tier) {
+    if (!this.ctx) return;
+    const f = { minor: 660, serious: 880, severe: 1040 }[tier] || 880;
+    const n = tier === 'severe' ? 3 : tier === 'serious' ? 2 : 1;
+    for (let i = 0; i < n; i++) {
+      const o = this.ctx.createOscillator(), g = this.ctx.createGain(), t0 = this.ctx.currentTime + i * 0.18;
+      o.type = 'square'; o.frequency.value = f; o.connect(g); g.connect(this.ctx.destination);
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+      o.start(t0); o.stop(t0 + 0.15);
+    }
+  },
+};
+
+/* ---------- real sensor ---------- */
+let wakeLock = null;
+async function requestWake() { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (monitoring && document.visibilityState === 'visible') requestWake(); });
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x == null) return;
+  gotMotion = true;
+  if (sim) return;
+  ingest(a.x / G, a.y / G, a.z / G, performance.now());
+}
+async function startMonitoring() {
+  alarm.unlock();
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    let r = 'denied';
+    try { r = await DeviceMotionEvent.requestPermission(); } catch (e) {}
+    if (r !== 'granted') { log('Motion access was denied. Close the tab, reopen the page and tap Allow.', 'danger'); return; }
+  }
+  window.addEventListener('devicemotion', onMotion);
+  monitoring = true; requestWake(); startGeo();
+  $('#btnStart').textContent = 'Stop monitoring'; $('#btnStart').classList.remove('primary');
+  setPill('On', 'on'); idleState(); log('Monitoring started. Keep this screen open.', 'ok');
+  setTimeout(() => { if (monitoring && !gotMotion) log('No motion data. Open this page on a phone over https://', 'warn'); }, 2500);
+}
+function stopMonitoring() {
+  window.removeEventListener('devicemotion', onMotion);
+  monitoring = false; try { wakeLock?.release(); } catch (e) {}
+  $('#btnStart').textContent = 'Start monitoring'; $('#btnStart').classList.add('primary');
+  setPill('Off', 'off'); idleState(); log('Monitoring stopped');
+}
+$('#btnStart').onclick = () => monitoring ? stopMonitoring() : startMonitoring();
+if (!window.isSecureContext) $('#insecure').hidden = false;
+
+/* ---------- simulator ---------- */
+const UP = { x: 0, y: -1, z: 0 };   // phone upright: gravity along -y (iOS axes)
+const FLAT = { x: 0, y: 0, z: -1 }; // phone lying flat
+const PROFILES = {
+  //        free fall ms, lowest g, peak g, pulse ms, extra bounces, end posture, noise, breathing
+  stumble: { ff: 0,   minG: 0.75, peak: 1.7, pw: 80, sec: [],         end: UP,                         noise: 0.04,  breathe: false },
+  gentle:  { ff: 260, minG: 0.40, peak: 2.7, pw: 100, sec: [],        end: { x: 0.5, y: -0.3, z: -0.8 }, noise: 0.015, breathe: true },
+  hard:    { ff: 440, minG: 0.25, peak: 5.6, pw: 80, sec: [1.5],      end: FLAT,                       noise: 0.015, breathe: true },
+  severe:  { ff: 570, minG: 0.20, peak: 7.8, pw: 70, sec: [1.6],      end: FLAT,                       noise: 0.012, breathe: true },
+  drop:    { ff: 460, minG: 0.03, peak: 9.5, pw: 16, sec: [4.2, 2.4], end: FLAT,                       noise: 0.0015, breathe: false },
+};
+function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+const norm = v => { const n = Math.hypot(v.x, v.y, v.z) || 1; return { x: v.x / n, y: v.y / n, z: v.z / n }; };
+const lerpDir = (a, b, f) => norm({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f });
+function vec(dir, mag, noise) { return { x: dir.x * mag + gauss() * noise, y: dir.y * mag + gauss() * noise, z: dir.z * mag + gauss() * noise }; }
+
+function makeTrace(kind) {
+  const P = PROFILES[kind], dt = 1000 / 60, out = [];
+  const end = norm(P.end), pre = kind === 'drop' ? 0.02 : 0.03;
+  for (let i = 0; i < 60; i++) out.push(vec(UP, 1, pre));                       // 1 s upright
+  if (kind === 'stumble') {
+    for (let i = 0; i < 9; i++) out.push(vec(UP, P.minG, 0.03));               // brief dip, never a real free fall
+  } else {
+    const n = Math.round(P.ff / dt);
+    for (let i = 0; i < n; i++) {                                              // free fall while rotating
+      const mag = i < 3 ? 1 - (1 - P.minG) * (i + 1) / 3 : P.minG;
+      out.push(vec(lerpDir(UP, end, i / n), Math.max(0, mag + gauss() * 0.02), 0.01));
+    }
+  }
+  const dir = kind === 'stumble' ? UP : end;
+  const n = Math.max(1, Math.round(P.pw / dt)), c = (n - 1) / 2;
+  for (let i = 0; i < n; i++) out.push(vec(dir, 1 + (P.peak - 1) * (1 - Math.abs(i - c) / (c + 1)), 0.02)); // impact pulse
+  for (const b of P.sec) {                                                     // bounces
+    for (let i = 0; i < 6; i++) out.push(vec(dir, kind === 'drop' ? 0.3 : 1, 0.02));
+    out.push(vec(dir, b, 0.02)); out.push(vec(dir, 1 + (b - 1) / 2, 0.02));
+  }
+  let k = 0;
+  const tail = () => {                                                         // after: lying there (or walking on)
+    k++;
+    const breath = P.breathe ? 0.02 * Math.sin(2 * Math.PI * 0.25 * k / 60) : 0;
+    return vec(dir, 1 + breath, P.noise);
+  };
+  return { samples: out, tail };
+}
+
+let sim = null;
+function playSim(kind) {
+  alarm.unlock();
+  if (sim || cd) return;
+  $('#toast').hidden = true;
+  resetDet();
+  const { samples, tail } = makeTrace(kind);
+  const startLog = $('#log').children.length;
+  let i = 0, extra = 0;
+  log('Simulating: ' + kind.replace('drop', 'phone dropped'));
+  setState('Monitoring', 'on');
+  sim = setInterval(() => {
+    const t = performance.now();
+    const v = i < samples.length ? samples[i++] : tail();
+    ingest(v.x, v.y, v.z, t);
+    if (i >= samples.length && det.state === 'idle' && !cd && ++extra > 90) {
+      clearInterval(sim); sim = null; idleState();
+      if (kind === 'stumble' && $('#log').children.length === startLog + 1) log('Stumble: detector stayed quiet, no alert', 'ok');
+    }
+  }, 1000 / 60);
+}
+document.querySelectorAll('[data-sim]').forEach(b => b.addEventListener('click', () => playSim(b.dataset.sim)));
+
+/* ---------- live graph ---------- */
+const cv = $('#graph'), cx = cv.getContext('2d');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const yOf = (g, h) => h - Math.sqrt(Math.min(g, 8) / 8) * (h - 6) - 3; // square-root scale: detail near 1 g, room for big impacts
+function draw() {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, w, h);
+  cx.font = '10px ' + css('--mono'); cx.fillStyle = css('--muted'); cx.strokeStyle = css('--line'); cx.lineWidth = 1;
+  for (const g of [1, 4, 8]) { const y = yOf(g, h); cx.beginPath(); cx.moveTo(0, y); cx.lineTo(w, y); cx.stroke(); cx.fillText(g + 'g', 4, y - 3); }
+  for (const [g, c] of [[CFG.FF_G, '--warn'], [CFG.IMPACT_G * (SENS[settings.sens] || 1), '--danger']]) {
+    const y = yOf(g, h); cx.strokeStyle = css(c); cx.setLineDash([4, 4]); cx.beginPath(); cx.moveTo(0, y); cx.lineTo(w, y); cx.stroke(); cx.setLineDash([]);
+  }
+  if (graph.length > 1) {
+    const now = graph[graph.length - 1].t;
+    cx.strokeStyle = css('--accent'); cx.lineWidth = 2; cx.lineJoin = 'round'; cx.beginPath();
+    graph.forEach((s, i) => { const x = w - (now - s.t) / 6000 * w, y = yOf(s.m, h); i ? cx.lineTo(x, y) : cx.moveTo(x, y); });
+    cx.stroke();
+    const lastM = graph[graph.length - 1].m;
+    $('#gval').firstChild.nodeValue = lastM.toFixed(2);
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+log('Ready. Tap Start monitoring, or try a demo button.');
+</script>
+</body>
+</html>
